@@ -1,0 +1,51 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Демо-вход (только макет)</title>
+<p id="s">Готовлю демо-аккаунт…</p>
+<script src="/crypto.js"></script>
+<script>
+// Только для локального макета (tests/mock_supabase.py): симулятор iOS не принимает ввод текста,
+// поэтому эта страница сама входит тестовым аккаунтом, создаёт ключ и кладёт пример сделок и прогнозов —
+// так же, как это сделало бы приложение. В настоящем приложении этой страницы нет.
+(async () => {
+  const q = new URLSearchParams(location.search), email = q.get("email"), password = q.get("pw");
+  const base = location.origin, apikey = "local-anon-key-for-testing-only";
+  const r = await fetch(base + "/auth/v1/token?grant_type=password", { method: "POST", headers: { apikey, "Content-Type": "application/json" }, body: JSON.stringify({ email, password }) });
+  const d = await r.json();
+  if (!r.ok) { document.getElementById("s").textContent = "Ошибка входа: " + JSON.stringify(d); return; }
+  const session = { access_token: d.access_token, refresh_token: d.refresh_token, expires_at: Math.floor(Date.now() / 1000) + 3600,
+    user: { id: d.user.id, email: d.user.email }, login_at: Date.now() };
+  const H = { apikey, Authorization: "Bearer " + d.access_token, "Content-Type": "application/json", Prefer: "resolution=merge-duplicates" };
+  const master = TJCrypto.newMasterKey(), k = await TJCrypto.deriveKeys(master);
+  const items = [{ rid: "0".repeat(32), ct: await TJCrypto.encrypt(k, "0".repeat(32), { t: "check", v: 2 }) }];
+  const day = 864e5, now = Date.now();
+  const trades = [
+    ["BTCUSDT", true, 68200, 67400, 69850, 0.1], ["ETHUSDT", true, 3520, 3460, 3634, 2], ["SOLUSDT", false, 182, 186, 189, 20],
+    ["XAUUSD", true, 4050, 4030, 4091, 1], ["BTCUSDT", false, 70100, 70800, 69100, 0.12], ["NVDA", true, 182, 178, null, 25]];
+  for (const [i, [symbol, isLong, entry, stop, exit, qty]] of trades.entries()) {
+    const rid = TJCrypto.randomRid();
+    items.push({ rid, ct: await TJCrypto.encrypt(k, rid, { t: "trade", symbol, isLong, entry, stop, exit, qty, fees: 2,
+      date: new Date(now - (i + 1) * day * 0.8).toISOString(), setup: "пробой уровня", emotion: i === 2 ? "FOMO" : "Спокоен", plan: i !== 2, notes: "" }) });
+  }
+  const fc = (label, market, horizon, at, price, up, down, flat, upT, dnT, summary, result) => ({ t: "forecast", label, market, horizon, at, price, move: price * 0.02,
+    bias: up >= down ? "up" : "down", summary, up: { probability: up, target: upT, reason: "пробой high20 на 4h" },
+    down: { probability: down, target: dnT, reason: "возврат к EMA50 на 1d" }, flat: { probability: flat, reason: "низкая волатильность перед новостями" },
+    levels: [{ price: upT, kind: "resistance", note: "high20 4h" }, { price: dnT, kind: "support", note: "EMA50 1d" }],
+    news: [{ title: "ФРС сохранила ставку, рынок ждёт данных по инфляции", url: "https://example.com/fed", impact: "neutral" }],
+    risks: "Выход данных по инфляции может резко сдвинуть цену.", result });
+  const forecasts = [
+    fc("BTCUSDT", "crypto", "1d", now - 2 * 36e5, 76040, 48, 32, 20, 77900, 74600, "Цена выше EMA20/50 на 1h и 4h, RSI 4h 61 — импульс вверх, но у 77 900 сопротивление дневного high20. Новости нейтральные.", null),
+    fc("XAUUSD", "gold", "3d", now - 4 * day, 4060, 55, 25, 20, 4140, 3990, "Золото держится над EMA50 на дневке, доллар слабеет.", { outcome: "up", checkedAt: now - day, hitAt: now - 2 * day }),
+    fc("ETHUSDT", "crypto", "1d", now - 3 * day, 3600, 40, 42, 18, 3700, 3500, "Сжатие диапазона на 4h, сигнал слабый.", { outcome: "down", checkedAt: now - 2 * day, hitAt: now - 2.5 * day }),
+    fc("AAPL", "stocks", "1w", now - 9 * day, 330, 52, 28, 20, 345, 318, "Отчёт выше ожиданий, цена над EMA200.", { outcome: "flat", checkedAt: now - 2 * day, hitAt: null }),
+  ];
+  for (const f of forecasts) { const rid = TJCrypto.randomRid(); items.push({ rid, ct: await TJCrypto.encrypt(k, rid, f) }); }
+  const w = await fetch(base + "/rest/v1/records", { method: "POST", headers: H, body: JSON.stringify(items) });
+  if (!w.ok) { document.getElementById("s").textContent = "Ошибка записи: " + await w.text(); return; }
+  localStorage.clear();
+  localStorage.setItem("tj-session", JSON.stringify(session));
+  localStorage.setItem(`tj-key:${session.user.id}`, JSON.stringify(master));
+  location.replace("/");
+})();
+</script>

@@ -1,7 +1,6 @@
-// Настройки подключения к базе. Заполняются один раз после создания проекта Supabase:
-// Supabase → Project Settings → API → Project URL и anon public key.
+// Настройки подключения к базе. Записано командой configure.py.
 // Оба значения публичные по замыслу Supabase: защиту данных дают правила доступа в базе и шифрование.
 window.TJ_CONFIG = {
-  supabaseUrl: "",
-  supabaseAnonKey: "",
+  supabaseUrl: "https://qdiundrbotlzoechifho.supabase.co",
+  supabaseAnonKey: "sb_publishable_t64DjiyJoLgbt3IqE1hFFA_bCZ59DyN",
 };

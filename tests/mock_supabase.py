@@ -106,6 +106,14 @@ class Handler(SimpleHTTPRequestHandler):
             link = (f"http://localhost:{PORT}/#access_token={t['access_token']}&refresh_token={t['refresh_token']}"
                     f"&expires_in=3600&token_type=bearer&type=invite")
             return self.reply(200, {"link": link})
+        if u.path == "/__test/demo":   # демо-вход для симулятора, см. tests/demo_login.html
+            data = (pathlib.Path(__file__).parent / "demo_login.html").read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            return
         if u.path == "/auth/v1/user":
             uid = self.uid()
             return self.reply(200, {"id": uid, "email": email_of(uid)}) if uid else self.reply(401, {"msg": "invalid JWT"})
