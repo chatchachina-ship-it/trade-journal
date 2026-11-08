@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="ru">
+<head><meta charset="utf-8"><title>Проверка шифрования</title></head>
+<body>
+<pre id="out">…</pre>
+<script src="../web/crypto.js"></script>
+<script src="vectors.js"></script>
+<script>
+(async () => {
+  const log = [];
+  let fail = 0;
+  const check = (name, ok) => { log.push((ok ? "ПРОЙДЕН " : "ПРОВАЛ  ") + name); if (!ok) fail++; };
+  const rejects = p => p.then(() => false, () => true);
+
+  check("Ключ робота выводится так же, как в эталоне", await TJCrypto.robotKeyFor(VECTORS.key) === VECTORS.robotKey);
+  const main = await TJCrypto.deriveKeys(VECTORS.key);
+  const robot = await TJCrypto.deriveKeys(VECTORS.robotKey);
+
+  for (const c of VECTORS.cases) {
+    const keys = c.keyType === "robot" ? robot : main;
+    check(`${c.label}: id записи совпадает`, await TJCrypto.rid(keys, c.label) === c.rid);
+    check(`${c.label}: шифр байт в байт как у эталона`, await TJCrypto.encrypt(keys, c.rid, c.obj) === c.ct);
+    const back = await TJCrypto.decrypt(keys, c.rid, c.ct);
+    check(`${c.label}: расшифровка`, JSON.stringify(back) === JSON.stringify(c.obj));
+    check(`${c.label}: длина выровнена до 256 байт`, (atob(c.ct).length - 48) % 256 === 0);
+  }
+
+  const mt5 = VECTORS.cases.find(c => c.keyType === "robot");
+  const manual = VECTORS.cases.find(c => c.label === "trade");
+  check("Ключ робота не открывает ручные сделки и заметки", await rejects(TJCrypto.decrypt(robot, manual.rid, manual.ct)));
+  check("Ключ пользователя не путается с ключом робота", await rejects(TJCrypto.decrypt(main, mt5.rid, mt5.ct)));
+  const raw = Uint8Array.from(atob(mt5.ct), ch => ch.charCodeAt(0));
+  raw[20] ^= 1;
+  check("Подменённый байт отвергается", await rejects(TJCrypto.decrypt(robot, mt5.rid, btoa(String.fromCharCode(...raw)))));
+  check("Запись под чужим id отвергается", await rejects(TJCrypto.decrypt(robot, VECTORS.cases[0].rid, mt5.ct)));
+  const other = await TJCrypto.deriveKeys(TJCrypto.newMasterKey());
+  check("Чужой ключ не расшифровывает", await rejects(TJCrypto.decrypt(other, mt5.rid, mt5.ct)));
+  check("Плохой формат ключа отвергается", await rejects(TJCrypto.deriveKeys("tjk_123")));
+  check("Открытого текста нет в шифре", !atob(mt5.ct).includes("XAUUSD"));
+  check("Новые ключи случайны", TJCrypto.newMasterKey() !== TJCrypto.newMasterKey());
+
+  log.push(`\nИтого: ${log.length - fail} из ${log.length}`);
+  document.getElementById("out").textContent = log.join("\n");
+  window.RESULT = { fail, log };
+})().catch(e => { document.getElementById("out").textContent = "ОШИБКА " + e; window.RESULT = { fail: -1, error: String(e) }; });
+</script>
+</body>
+</html>

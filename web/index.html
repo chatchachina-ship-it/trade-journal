@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://*.supabase.co; manifest-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
+<title>Дневник сделок</title>
+<meta name="theme-color" content="#0E1116">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Дневник">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-180.png">
+<style>
+  :root {
+    --bg: #F2F2F7; --card: #FFFFFF; --text: #111; --muted: #8A8A8E; --line: #E5E5EA;
+    --green: #1FA855; --red: #E5484D; --orange: #F08C00; --blue: #0A84FF; --field: #F2F2F7;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0E1116; --card: #1A1D23; --text: #F2F2F2; --muted: #8E9199; --line: #2A2E36;
+      --green: #2EC773; --red: #FF6369; --field: #252932;
+    }
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.35 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  body { padding-bottom: calc(90px + env(safe-area-inset-bottom)); }
+  header { padding: calc(14px + env(safe-area-inset-top)) 16px 8px; display: flex; align-items: center; justify-content: space-between; max-width: 672px; margin: 0 auto; }
+  h1 { font-size: 32px; margin: 0; }
+  h2 { font-size: 24px; margin: 12px 0 6px; }
+  .icon-btn { width: 44px; height: 44px; border-radius: 50%; border: 0; background: var(--card); color: var(--text);
+    font-size: 26px; box-shadow: 0 1px 4px rgba(0,0,0,.12); cursor: pointer; }
+  main { padding: 0 16px; max-width: 672px; margin: 0 auto; }
+  .card { background: var(--card); border-radius: 18px; margin: 12px 0; overflow: hidden; }
+  .section-title { color: var(--muted); font-size: 14px; font-weight: 600; margin: 22px 4px 6px; }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 13px 16px; border-bottom: 1px solid var(--line); }
+  .row:last-child { border-bottom: 0; }
+  .muted { color: var(--muted); }
+  .small { font-size: 13px; }
+  .trade { cursor: pointer; }
+  .sym { font-weight: 700; font-size: 17px; }
+  .badge { font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 99px; margin-left: 6px; vertical-align: 2px; }
+  .long { color: var(--green); background: color-mix(in srgb, var(--green) 15%, transparent); }
+  .short { color: var(--red); background: color-mix(in srgb, var(--red) 15%, transparent); }
+  .src { color: var(--blue); background: color-mix(in srgb, var(--blue) 14%, transparent); }
+  .warn { color: var(--orange); }
+  .pos { color: var(--green); } .neg { color: var(--red); } .open { color: var(--blue); }
+  .num { font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+  .big { font-size: 36px; font-weight: 800; }
+  .empty { text-align: center; color: var(--muted); padding: 70px 20px; }
+  .empty b { display: block; color: var(--text); font-size: 20px; margin-bottom: 6px; }
+  .seg { display: flex; background: var(--line); border-radius: 12px; padding: 3px; gap: 3px; }
+  .seg button { flex: 1; border: 0; background: transparent; color: var(--text); padding: 8px 4px; border-radius: 9px; font: inherit; font-size: 15px; cursor: pointer; }
+  .seg button.on { background: var(--card); font-weight: 600; box-shadow: 0 1px 3px rgba(0,0,0,.15); }
+  nav.tabs { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(14px + env(safe-area-inset-bottom));
+    display: flex; gap: 2px; padding: 5px; background: var(--card); border-radius: 99px; box-shadow: 0 4px 20px rgba(0,0,0,.18); z-index: 5; }
+  nav.tabs button { border: 0; background: transparent; color: var(--text); padding: 10px 12px; border-radius: 99px; font: inherit; font-size: 15px; cursor: pointer; }
+  nav.tabs button.on { background: var(--bg); color: var(--green); font-weight: 600; }
+  .hidden { display: none !important; }
+  .sheet-bg { position: fixed; inset: 0; background: rgba(0,0,0,.4); display: none; z-index: 10; }
+  .sheet-bg.show { display: block; }
+  .sheet { position: fixed; left: 0; right: 0; bottom: 0; top: calc(30px + env(safe-area-inset-top)); background: var(--bg);
+    border-radius: 20px 20px 0 0; overflow-y: auto; transform: translateY(100%); transition: transform .25s; z-index: 11; }
+  .sheet.show { transform: none; }
+  .sheet-head { position: sticky; top: 0; display: flex; align-items: center; justify-content: space-between; padding: 14px 16px;
+    background: var(--bg); z-index: 1; font-weight: 700; }
+  .sheet-head button { border: 0; background: none; font: inherit; color: var(--blue); font-size: 17px; cursor: pointer; padding: 4px; }
+  .sheet-head button:disabled { color: var(--muted); }
+  .sheet-body { padding: 0 16px calc(30px + env(safe-area-inset-bottom)); max-width: 640px; margin: 0 auto; }
+  input, select, textarea { font: inherit; color: var(--text); background: transparent; border: 0; outline: none; min-width: 0; }
+  .row input:not([type=checkbox]), .row select { text-align: right; flex: 1; }
+  .row input.full, textarea { text-align: left; width: 100%; }
+  input[readonly] { color: var(--muted); }
+  textarea { resize: vertical; min-height: 70px; }
+  .note { font-size: 14px; padding: 6px 4px 0; }
+  .btn { display: block; width: 100%; border: 0; background: var(--card); color: var(--blue); font: inherit; padding: 14px; border-radius: 18px; margin-top: 10px; cursor: pointer; text-align: center; }
+  .btn.primary { background: var(--green); color: #fff; font-weight: 600; }
+  .btn.primary:disabled { opacity: .45; }
+  .btn.danger { color: var(--red); }
+  .switch { appearance: none; width: 51px; height: 31px; border-radius: 99px; background: var(--line); position: relative; cursor: pointer; transition: .2s; flex: none; }
+  .switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 27px; height: 27px; border-radius: 50%; background: #fff; transition: .2s; box-shadow: 0 1px 3px rgba(0,0,0,.3); }
+  .switch:checked { background: var(--green); } .switch:checked::after { left: 22px; }
+  svg.chart { display: block; width: 100%; height: 180px; }
+  .insight { padding: 13px 16px; border-bottom: 1px solid var(--line); font-size: 15px; }
+  .insight:last-child { border-bottom: 0; }
+  .secret { font: 14px/1.4 ui-monospace, Menlo, monospace; word-break: break-all; background: var(--field); border-radius: 12px; padding: 12px; margin: 8px 0; user-select: all; }
+  .copy { border: 0; background: none; color: var(--blue); font: inherit; font-size: 14px; cursor: pointer; padding: 0; }
+  .auth { max-width: 420px; margin: 0 auto; padding-top: 20px; }
+  .auth img { width: 72px; height: 72px; border-radius: 18px; display: block; margin: 0 auto; }
+  .center { text-align: center; }
+  .status { font-size: 13px; color: var(--muted); padding: 0 4px; }
+  label.check { display: flex; gap: 10px; align-items: flex-start; padding: 13px 16px; cursor: pointer; }
+  label.check input { width: 20px; height: 20px; flex: none; margin-top: 1px; accent-color: var(--green); }
+  .bar { height: 8px; border-radius: 99px; background: var(--line); overflow: hidden; display: flex; margin-top: 6px; }
+  .bar i { display: block; height: 100%; }
+  .seg.wrap { flex: 1; }
+  .seg.wrap button { white-space: nowrap; padding: 8px 2px; font-size: 14px; }
+  a.src-link { color: var(--blue); text-decoration: none; }
+</style>
+</head>
+<body>
+<header>
+  <h1 id="title">Дневник сделок</h1>
+  <button class="icon-btn hidden" id="addBtn" aria-label="Новая сделка">+</button>
+</header>
+<main id="view"></main>
+
+<nav class="tabs hidden" id="tabs">
+  <button data-tab="trades" class="on">Сделки</button>
+  <button data-tab="stats">Статистика</button>
+  <button data-tab="ai">Аналитик</button>
+  <button data-tab="settings">Настройки</button>
+</nav>
+
+<div class="sheet-bg" id="sheetBg"></div>
+<div class="sheet" id="sheet" aria-hidden="true">
+  <div class="sheet-head">
+    <button id="cancelBtn" type="button">Отмена</button>
+    <span id="sheetTitle">Новая сделка</span>
+    <button id="saveBtn" type="button">Сохранить</button>
+  </div>
+  <form class="sheet-body" id="form" autocomplete="off">
+    <div class="note src hidden" id="mt5Note" style="background:none">Сделка пришла из MetaTrader: цены и результат изменить нельзя. Можно отметить сетап, состояние и заметки.</div>
+    <div class="section-title">Инструмент</div>
+    <div class="card">
+      <div class="row"><input class="full" name="symbol" placeholder="Тикер, например BTCUSDT" autocapitalize="characters" maxlength="40"></div>
+      <div class="row"><div class="seg" style="flex:1" id="dirSeg"><button type="button" data-long="1" class="on">Лонг</button><button type="button" data-long="0">Шорт</button></div></div>
+      <div class="row"><span>Дата</span><input type="datetime-local" name="date"></div>
+    </div>
+
+    <div class="section-title">Цены</div>
+    <div class="card">
+      <div class="row"><span>Вход</span><input name="entry" inputmode="decimal" placeholder="цена" maxlength="20"></div>
+      <div class="row"><span>Стоп</span><input name="stop" inputmode="decimal" placeholder="цена" maxlength="20"></div>
+      <div class="row"><span>Выход</span><input name="exit" inputmode="decimal" placeholder="пусто — открыта" maxlength="20"></div>
+      <div class="row"><span id="qtyLabel">Объём</span><input name="qty" inputmode="decimal" placeholder="монет / акций" maxlength="20"></div>
+      <div class="row" id="feesRow"><span>Комиссия, $</span><input name="fees" inputmode="decimal" placeholder="0" maxlength="20"></div>
+    </div>
+    <div class="note warn" id="stopWarn"></div>
+
+    <div id="preview"></div>
+
+    <div class="section-title">Психология</div>
+    <div class="card">
+      <div class="row"><input class="full" name="setup" placeholder="Сетап, например пробой уровня" maxlength="200"></div>
+      <div class="row"><span>Состояние</span>
+        <select name="emotion">
+          <option>Спокоен</option><option>Страх</option><option>Жадность</option><option>FOMO</option><option>Отыгрыш</option>
+        </select></div>
+      <div class="row"><span>Сделка по плану</span><input type="checkbox" class="switch" name="plan" checked></div>
+    </div>
+
+    <div class="section-title">Заметки</div>
+    <div class="card"><div class="row"><textarea name="notes" placeholder="Почему вошёл, что пошло не так…" maxlength="4000"></textarea></div></div>
+
+    <button type="button" class="btn danger" id="deleteBtn">Удалить сделку</button>
+  </form>
+</div>
+
+<script src="config.js"></script>
+<script src="crypto.js"></script>
+<script src="analyst.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
