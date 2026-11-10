@@ -1,18 +1,19 @@
-// ИИ-аналитик: свечи с нескольких таймфреймов + свежие новости → прогноз Claude с точными целями и вероятностями.
+// Аналитик: свечи с нескольких таймфреймов + свежие новости → прогноз с точными целями и вероятностями.
+// Модель — бесплатный Google Gemini (ключ GEMINI_API_KEY в секретах функции). Если ключа нет, лимит Gemini
+// исчерпан или ответ не прошёл проверку — прогноз считается по формулам (бесплатно, без внешних сервисов).
 //
 // Безопасность:
 //  * Вызывать может только вошедший пользователь (проверяется его токен); лимит 10 анализов в сутки — в базе.
-//  * Ключ Anthropic хранится только в секретах функции (ANTHROPIC_API_KEY), в приложение он не попадает.
+//  * Ключ хранится только в секретах функции, в приложение он не попадает.
 //  * Функция ничего не сохраняет и не пишет в логи тикеры: прогноз уходит пользователю и шифруется у него.
-//  * Тикер и рыночные данные отправляются в Anthropic — сделки, заметки и ключи пользователя нет.
-import Anthropic from "npm:@anthropic-ai/sdk@1.6.0";
-import { candlesSince, expectedMove, FORECAST_SCHEMA, HORIZONS, loadFrames, Market, normalizeSymbol, summarize, validate } from "./market.ts";
+//  * В Google уходят только тикер и рыночные данные — сделки, заметки и ключи пользователя нет.
+import { candlesSince, expectedMove, Forecast, HORIZONS, loadFrames, Market, normalizeSymbol, ruleForecast, summarize, validate } from "./market.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const ANON = Deno.env.get("SUPABASE_ANON_KEY")!;
 const SERVICE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const ORIGIN = Deno.env.get("APP_ORIGIN") || "*";   // адрес приложения, например https://login.github.io
-const MODEL = "claude-opus-5-5";
+const MODEL = Deno.env.get("GEMINI_MODEL") || "gemini-2.5-flash";
 const MARKETS: Market[] = ["crypto", "gold", "forex", "stocks"];
 
 const cors = {
@@ -57,44 +58,55 @@ async function analyze(user: { id: string; token: string }, market: Market, src:
     timeframes: summarize(frames),
   };
 
-  const client = new Anthropic({ apiKey: Deno.env.get("ANTHROPIC_API_KEY")!, timeout: 140_000, maxRetries: 1 });
-  const messages: Anthropic.MessageParam[] = [{ role: "user", content: `Данные (JSON):\n${JSON.stringify(input)}` }];
-  const urls = new Set<string>();
-  let usage = { input: 0, output: 0, searches: 0 };
-
-  for (let attempt = 0; attempt < 2; attempt++) {
-    let res: Anthropic.Message;
-    // Серверный поиск может поставить ответ на паузу — продолжаем, пока модель не закончит.
-    for (let step = 0; ; step++) {
-      res = await client.messages.create({
-        model: MODEL,
-        max_tokens: 16000,
-        system: SYSTEM,
-        thinking: { type: "adaptive" },
-        output_config: { effort: "medium", format: { type: "json_schema", schema: FORECAST_SCHEMA } },
-        tools: [{ type: "web_search_20260209", name: "web_search", max_uses: 4, allowed_callers: ["direct"] }],
-        messages,
-      });
-      usage.input += res.usage.input_tokens; usage.output += res.usage.output_tokens;
-      usage.searches += res.usage.server_tool_use?.web_search_requests ?? 0;
-      for (const b of res.content) {
-        if (b.type === "web_search_tool_result" && Array.isArray(b.content))
-          for (const r of b.content) if (r.type === "web_search_result") urls.add(r.url);
-      }
-      if (res.stop_reason !== "pause_turn" || step >= 3) break;
-      messages.push({ role: "assistant", content: res.content });
+  const key = Deno.env.get("GEMINI_API_KEY");
+  if (key) {
+    try {
+      const f = await gemini(key, input, price, move);
+      if (f) return { forecast: f, price, move, engine: "ai" };
+    } catch (e) {
+      console.error("gemini error:", String((e as Error)?.message || "").slice(0, 200));
     }
-    if (res!.stop_reason === "refusal") throw new UserError("Модель отказалась анализировать этот запрос");
-    const text = res!.content.filter(b => b.type === "text").map(b => (b as Anthropic.TextBlock).text).join("");
-    let parsed: any;
-    try { parsed = JSON.parse(text); } catch { parsed = null; }
-    const { errors, clean } = validate(parsed, price, move, urls);
-    if (!errors.length) return { forecast: clean, price, move, usage };
-    if (attempt === 1) throw new Error("Модель дважды вернула некорректный прогноз: " + errors.join("; "));
-    messages.push({ role: "assistant", content: res!.content });
-    messages.push({ role: "user", content: `Ответ не прошёл проверку: ${errors.join("; ")}. Исправь и верни прогноз заново в том же формате (повторный поиск не нужен).` });
   }
-  throw new Error("unreachable");
+  return { forecast: validate(ruleForecast(frames, price, move), price, move, new Set()).clean, price, move, engine: "formula" };
+}
+
+const FORMAT = `Ответь ТОЛЬКО JSON-объектом без пояснений и без markdown:
+{"bias":"up|down|flat","summary":"3–5 предложений","up":{"probability":целое,"target":число,"reason":"..."},
+"down":{"probability":целое,"target":число,"reason":"..."},"flat":{"probability":целое,"reason":"..."},
+"levels":[{"price":число,"kind":"support|resistance","note":"..."}],
+"news":[{"title":"заголовок","source":"домен сайта-источника, например reuters.com","impact":"bullish|bearish|neutral"}],"risks":"..."}`;
+
+async function gemini(key: string, input: unknown, price: number, move: number): Promise<Forecast | null> {
+  const contents: any[] = [{ role: "user", parts: [{ text: `Данные (JSON):\n${JSON.stringify(input)}\n\n${FORMAT}` }] }];
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`, {
+      method: "POST", signal: AbortSignal.timeout(90_000),
+      headers: { "x-goog-api-key": key, "Content-Type": "application/json" },
+      body: JSON.stringify({ systemInstruction: { parts: [{ text: SYSTEM }] }, contents,
+        tools: [{ google_search: {} }], generationConfig: { temperature: 0.3 } }),
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const d = await r.json();
+    const cand = d?.candidates?.[0];
+    const text: string = (cand?.content?.parts || []).map((p: any) => p.text || "").join("");
+    // Источники — только то, что реально нашёл поиск Google: домен → ссылка.
+    const chunks: { uri: string; title: string }[] = (cand?.groundingMetadata?.groundingChunks || [])
+      .map((c: any) => c.web).filter((w: any) => typeof w?.uri === "string" && w.uri.startsWith("https://"));
+    let parsed: any = null;
+    try { parsed = JSON.parse(text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1)); } catch { /* ниже — повтор */ }
+    if (parsed && Array.isArray(parsed.news)) {
+      parsed.news = parsed.news.map((n: any) => {
+        const src = String(n?.source || "").toLowerCase().replace(/^www\./, "");
+        const c = chunks.find(c => src && c.title.toLowerCase().replace(/^www\./, "") === src);
+        return c ? { title: n.title, url: c.uri, impact: n.impact } : null;
+      }).filter(Boolean);
+    }
+    const { errors, clean } = validate(parsed, price, move, new Set(chunks.map(c => c.uri)));
+    if (!errors.length) return clean;
+    contents.push({ role: "model", parts: [{ text: text || "{}" }] });
+    contents.push({ role: "user", parts: [{ text: `Ответ не прошёл проверку: ${parsed ? errors.join("; ") : "это не JSON"}. Исправь и верни только JSON в том же формате.` }] });
+  }
+  return null;
 }
 
 class UserError extends Error {}
@@ -133,7 +145,6 @@ Deno.serve(async req => {
     if (body.op !== "analyze") return reply(400, { message: "Неизвестная операция" });
     const horizon = String(body.horizon);
     if (!HORIZONS[horizon]) return reply(400, { message: "Неверный горизонт" });
-    if (!Deno.env.get("ANTHROPIC_API_KEY")) return reply(503, { message: "Аналитик не настроен владельцем" });
 
     // Сначала списываем лимит (атомарно в базе), при сбое сервера — возвращаем.
     const q = await rest("/rest/v1/rpc/ai_consume", token);

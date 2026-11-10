@@ -260,3 +260,59 @@ export const FORECAST_SCHEMA = {
     risks: { type: "string" },
   },
 };
+
+// ---------------------------------------------------------------- прогноз по формулам (без ИИ)
+
+/** Бесплатный запасной аналитик: тренд по EMA и RSI на 1h/4h/1d, цели у ближайших уровней, вероятности
+ *  из силы тренда и расстояния до целей. Всегда проходит validate(). */
+export function ruleForecast(frames: Record<string, Bar[]>, price: number, move: number): Forecast {
+  const tfs = ["1h", "4h", "1d"].filter(tf => (frames[tf]?.length ?? 0) >= 50);
+  const notes: string[] = [];
+  let score = 0, n = 0;
+  for (const tf of tfs) {
+    const c = frames[tf].map(b => b.c);
+    const e20 = ema(c, 20)!, e50 = ema(c, 50)!, r = rsi(c) ?? 50;
+    let s = (price > e20 ? 1 : -1) + (price > e50 ? 1 : -1) + (e20 > e50 ? 1 : -1);
+    s += r > 70 ? -1 : r < 30 ? 1 : r > 55 ? 0.5 : r < 45 ? -0.5 : 0;   // перекупленность гасит рост, перепроданность — падение
+    score += s / 3.5; n++;
+    notes.push(`${tf}: цена ${price > e50 ? "выше" : "ниже"} EMA50, EMA20 ${e20 > e50 ? "выше" : "ниже"} EMA50, RSI ${Math.round(r)}`);
+  }
+  score = n ? score / n : 0;   // от −1 (сильно вниз) до +1 (сильно вверх)
+
+  const lv = (kind: "resistance" | "support") => {
+    const out: { price: number; tf: string }[] = [];
+    for (const tf of tfs) {
+      const sw = swings(frames[tf].slice(-150));
+      for (const x of kind === "resistance" ? sw.highs : sw.lows) out.push({ price: x, tf });
+    }
+    return out.filter(l => kind === "resistance" ? l.price > price : l.price < price)
+      .map(l => ({ ...l, k: Math.abs(l.price - price) / move })).sort((a, b) => a.k - b.k);
+  };
+  const pick = (kind: "resistance" | "support") => {
+    const all = lv(kind), inRange = all.find(l => l.k >= 0.6 && l.k <= 2.5);
+    return { all, best: inRange ?? null };
+  };
+  const res = pick("resistance"), sup = pick("support");
+  const up = res.best?.price ?? price + move, down = sup.best?.price ?? price - move;
+  const ku = (up - price) / move, kd = (price - down) / move;
+
+  const flat = Math.max(10, Math.min(45, Math.round(20 + 15 * ((ku + kd) / 2 - 1))));
+  const wu = (1 + 0.6 * score) / ku, wd = (1 - 0.6 * score) / kd;
+  let pu = Math.round((100 - flat) * wu / (wu + wd));
+  pu = Math.max(5, Math.min(90 - flat, pu));
+  const pd = 100 - flat - pu;
+  const bias = Math.max(pu, pd, flat) === flat ? "flat" : pu >= pd ? "up" : "down";
+  const strength = Math.abs(score) > 0.6 ? "сильный" : Math.abs(score) > 0.25 ? "умеренный" : "слабый";
+  const dir = score > 0.1 ? "восходящий" : score < -0.1 ? "нисходящий" : "боковой";
+  const levels = [
+    ...res.all.slice(0, 3).map(l => ({ price: round(l.price, 7)!, kind: "resistance" as const, note: `локальный максимум ${l.tf}` })),
+    ...sup.all.slice(0, 3).map(l => ({ price: round(l.price, 7)!, kind: "support" as const, note: `локальный минимум ${l.tf}` })),
+  ];
+  return {
+    bias, summary: `Расчёт по формулам, без ИИ и без новостей. Тренд ${dir}, ${strength} (${notes.join("; ")}). Ожидаемый ход за горизонт ≈ ${move.toPrecision(4)}.`,
+    up: { probability: pu, target: round(up, 7)!, reason: res.best ? `ближайшее сопротивление (${res.best.tf})` : "один ожидаемый ход вверх (ATR)" },
+    down: { probability: pd, target: round(down, 7)!, reason: sup.best ? `ближайшая поддержка (${sup.best.tf})` : "один ожидаемый ход вниз (ATR)" },
+    flat: { probability: flat, reason: "цели дальше обычного хода за горизонт — выше шанс остаться в диапазоне" },
+    levels, news: [], risks: "Формула не знает о новостях и событиях: перед отчётами и данными по ставкам прогноз ненадёжен.",
+  } as Forecast;
+}

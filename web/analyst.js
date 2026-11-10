@@ -18,6 +18,7 @@ function cleanForecast(o) {
   return {
     t: "forecast", label: str(o.label, 20), market: AI_MARKETS[o.market] ? o.market : "crypto",
     horizon: AI_HORIZONS[o.horizon] ? o.horizon : "1d", at: fin(o.at) ?? 0, price: fin(o.price), move: fin(o.move),
+    engine: o.engine === "formula" ? "formula" : "ai",
     bias: ["up", "down", "flat"].includes(o.bias) ? o.bias : "flat", summary: str(o.summary, 900),
     up: scen(o.up, true), down: scen(o.down, true), flat: scen(o.flat, false), risks: str(o.risks, 500),
     levels: (Array.isArray(o.levels) ? o.levels : []).slice(0, 6).filter(l => fin(l?.price) != null)
@@ -58,7 +59,7 @@ async function runAnalysis() {
   ai.busy = true; ai.msg = ""; render();
   try {
     const d = await aiCall({ op: "analyze", market: ai.market, symbol: ai.symbol, horizon: ai.horizon });
-    const f = cleanForecast({ ...d.forecast, t: "forecast", label: d.label, market: d.market, horizon: d.horizon, at: d.at, price: d.price, move: d.move });
+    const f = cleanForecast({ ...d.forecast, t: "forecast", label: d.label, market: d.market, horizon: d.horizon, at: d.at, price: d.price, move: d.move, engine: d.engine });
     const rid = TJCrypto.randomRid();
     await putRecord(rid, f);
     ai.left = d.left; ai.open = rid;
@@ -127,7 +128,7 @@ function forecastCard(f) {
   return `
     <div class="card"><div class="insight">
       <div style="display:flex;justify-content:space-between;align-items:baseline"><span class="sym">${esc(f.label)}</span><span class="muted small">${dateFmt.format(new Date(f.at))} · ${AI_HORIZONS[f.horizon][0]}</span></div>
-      <div class="muted small">Цена при анализе: ${priceFmt(f.price)}</div>
+      <div class="muted small">Цена при анализе: ${priceFmt(f.price)} · ${f.engine === "formula" ? "по формулам" : "ИИ Gemini"}</div>
       ${probBar(f)}
       <p style="margin:10px 0 0">${esc(f.summary)}</p>
       ${resLine}

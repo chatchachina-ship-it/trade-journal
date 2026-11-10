@@ -1,6 +1,6 @@
 // Кэширует файлы приложения, чтобы оно открывалось без интернета.
 // Запросы к базе (другой домен) не трогаем и не кэшируем.
-const CACHE = "trade-journal-v3";
+const CACHE = "trade-journal-v4";
 const FILES = ["./", "index.html", "app.js", "analyst.js", "crypto.js", "config.js", "manifest.webmanifest", "icon-192.png", "icon-512.png", "icon-180.png"];
 
 self.addEventListener("install", e => {
